@@ -52,11 +52,18 @@ if __name__ == "__main__":
     model.add(tf.keras.layers.InputLayer([MNIST.H, MNIST.W, MNIST.C]))
     # TODO: Finish the model. Namely add:
     # - a `tf.keras.layers.Flatten()` layer
+    model.add(tf.keras.layers.Flatten(name="flatten"))
+
     # - add `args.layers` number of fully connected hidden layers
     #   `tf.keras.layers.Dense()` with  `args.hidden_layer` neurons, using activation
     #   from `args.activation`, allowing "none", "relu", "tanh", "sigmoid".
+    for i in range(args.layers):
+        model.add(tf.keras.layers.Dense(args.hidden_layer, activation=args.activation,
+                                        name="hidden_{0}".format(i+1)))
+
     # - finally, add a final fully connected layer with
     #   `MNIST.LABELS` units and `tf.nn.softmax` activation.
+    model.add(tf.keras.layers.Dense(MNIST.LABELS, activation=tf.nn.softmax, name="output_layer"))
 
     model.compile(
         optimizer=tf.optimizers.Adam(),
@@ -64,7 +71,7 @@ if __name__ == "__main__":
         metrics=[tf.metrics.SparseCategoricalAccuracy()],
     )
 
-    tb_callback=tf.keras.callbacks.TensorBoard(args.logdir, histogram_freq=1, update_freq=100, profile_batch=0)
+    tb_callback = tf.keras.callbacks.TensorBoard(args.logdir, histogram_freq=1, update_freq=100, profile_batch=0)
     model.fit(
         mnist.train.data["images"], mnist.train.data["labels"],
         batch_size=args.batch_size, epochs=args.epochs,
@@ -77,6 +84,7 @@ if __name__ == "__main__":
     )
     tb_callback.on_epoch_end(1, {"val_test_" + metric: value for metric, value in zip(model.metrics_names, test_logs)})
 
+    print(test_logs)
     # TODO: Write test accuracy as percentages rounded to two decimal places.
     with open("mnist_layers_activations.out", "w") as out_file:
-        print("{:.2f}".format(100 * accuracy), file=out_file)
+        print("{:.2f}".format(100 * test_logs[1]), file=out_file)
