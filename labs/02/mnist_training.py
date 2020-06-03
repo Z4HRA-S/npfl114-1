@@ -61,12 +61,29 @@ if __name__ == "__main__":
     # For `SGD`, `args.momentum` can be specified.
     # - If `args.decay` is not specified, pass the given `args.learning_rate`
     #   directly to the optimizer as a `learning_rate` argument.
+    learning_rate = args.learning_rate
+
     # - If `args.decay` is set, then
-    #   - for `polynomial`, use `tf.optimizers.schedules.PolynomialDecay`
-    #     using the given `args.learning_rate_final`;
-    #   - for `exponential`, use `tf.optimizers.schedules.ExponentialDecay`
-    #     and set `decay_rate` appropriately to reach `args.learning_rate_final`
-    #     just after the training (and keep the default `staircase=False`).
+    if args.decay:
+
+        #   - for `polynomial`, use `tf.optimizers.schedules.PolynomialDecay`
+        #     using the given `args.learning_rate_final`;
+        if args.decay == "polynomial":
+            learning_rate = tf.keras.optimizers.schedules.PolynomialDecay(
+                initial_learning_rate=args.learning_rate,
+                decay_steps=mnist.train.size / args.batch_size,
+                end_learning_rate=args.learning_rate_final,
+            )
+
+        #   - for `exponential`, use `tf.optimizers.schedules.ExponentialDecay`
+        #     and set `decay_rate` appropriately to reach `args.learning_rate_final`
+        #     just after the training (and keep the default `staircase=False`).
+        elif args.decay == "exponential":
+            learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
+                initial_learning_rate=args.learning_rate,
+                decay_steps=mnist.train.size / args.batch_size,
+                decay_rate=args.learning_rate_final,
+            )
     #   In both cases, `decay_steps` should be total number of training batches
     #   and you should pass the created `{Polynomial,Exponential}Decay` to
     #   the optimizer using the `learning_rate` constructor argument.
@@ -77,13 +94,19 @@ if __name__ == "__main__":
     #   rate by using `model.optimizer.learning_rate(model.optimizer.iterations)`,
     #   so after training this value should be `args.learning_rate_final`.
 
+    if args.optimizer == "Adam":
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+    else:
+        momentum = args.momentum if args.momentum else 0.0
+        optimizer = tf.keras.optimizers.SGD(learning_rate=learning_rate, momentum=momentum)
+
     model.compile(
-        optimizer=None,
+        optimizer=optimizer,
         loss=tf.losses.SparseCategoricalCrossentropy(),
         metrics=[tf.metrics.SparseCategoricalAccuracy()],
     )
 
-    tb_callback=tf.keras.callbacks.TensorBoard(args.logdir, histogram_freq=1, update_freq=100, profile_batch=0)
+    tb_callback = tf.keras.callbacks.TensorBoard(args.logdir, histogram_freq=1, update_freq=100, profile_batch=0)
     model.fit(
         mnist.train.data["images"], mnist.train.data["labels"],
         batch_size=args.batch_size, epochs=args.epochs,
@@ -98,4 +121,4 @@ if __name__ == "__main__":
 
     # TODO: Write test accuracy as percentages rounded to two decimal places.
     with open("mnist_training.out", "w") as out_file:
-        print("{:.2f}".format(100 * accuracy), file=out_file)
+        print("{:.2f}".format(100 * test_logs[1]), file=out_file)

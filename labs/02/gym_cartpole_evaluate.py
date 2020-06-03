@@ -29,7 +29,7 @@ def evaluate_model(model, seed=42, episodes=100, render=False, report_per_episod
             if render:
                 env.render()
 
-            prediction = model.predict_on_batch(observation[np.newaxis, ...])[0].numpy()
+            prediction = model.predict_on_batch(observation[np.newaxis, ...])[0]#.numpy()
             if len(prediction) == 1:
                 action = prediction[0] >= 0.5
             elif len(prediction) == 2:
