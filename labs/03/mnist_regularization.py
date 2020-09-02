@@ -3,7 +3,7 @@ import argparse
 import datetime
 import os
 import re
-
+from keras.utils import np_utils
 import numpy as np
 import tensorflow as tf
 
@@ -60,9 +60,13 @@ if __name__ == "__main__":
     # Create the model
     model = tf.keras.Sequential()
     model.add(tf.keras.layers.Flatten(input_shape=[MNIST.H, MNIST.W, MNIST.C]))
+    model.add(tf.keras.layers.Dropout(args.dropout))
     for hidden_layer in args.hidden_layers:
-        model.add(tf.keras.layers.Dense(hidden_layer, activation=tf.nn.relu))
-    model.add(tf.keras.layers.Dense(MNIST.LABELS, activation=tf.nn.softmax))
+        model.add(tf.keras.layers.Dense(hidden_layer, activation=tf.nn.relu,
+                                        kernel_regularizer=tf.keras.regularizers.L1L2(args.l2)))
+        model.add(tf.keras.layers.Dropout(args.dropout))
+    model.add(tf.keras.layers.Dense(MNIST.LABELS, activation=tf.nn.softmax,
+                                    kernel_regularizer=tf.keras.regularizers.L1L2(args.l2)))
 
     # TODO: Implement label smoothing.
     # Apply the given smoothing. You will need to change the
@@ -75,20 +79,20 @@ if __name__ == "__main__":
 
     model.compile(
         optimizer=tf.optimizers.Adam(),
-        loss=tf.losses.SparseCategoricalCrossentropy(),
-        metrics=[tf.metrics.SparseCategoricalAccuracy(name="accuracy")],
+        loss=tf.losses.CategoricalCrossentropy(label_smoothing=args.label_smoothing),
+        metrics=[tf.metrics.CategoricalAccuracy(name="accuracy")],
     )
 
-    tb_callback=tf.keras.callbacks.TensorBoard(args.logdir, histogram_freq=1, update_freq=100, profile_batch=0)
+    tb_callback = tf.keras.callbacks.TensorBoard(args.logdir, histogram_freq=1, update_freq=100, profile_batch=0)
     model.fit(
-        mnist.train.data["images"][:5000], mnist.train.data["labels"][:5000],
+        mnist.train.data["images"][:5000], np_utils.to_categorical(mnist.train.data["labels"][:5000]),
         batch_size=args.batch_size, epochs=args.epochs,
-        validation_data=(mnist.dev.data["images"], mnist.dev.data["labels"]),
+        validation_data=(mnist.dev.data["images"], np_utils.to_categorical(mnist.dev.data["labels"])),
         callbacks=[tb_callback],
     )
 
     test_logs = model.evaluate(
-        mnist.test.data["images"], mnist.test.data["labels"], batch_size=args.batch_size,
+        mnist.test.data["images"], np_utils.to_categorical(mnist.test.data["labels"]), batch_size=args.batch_size,
     )
     tb_callback.on_epoch_end(1, {"val_test_" + metric: value for metric, value in zip(model.metrics_names, test_logs)})
 
