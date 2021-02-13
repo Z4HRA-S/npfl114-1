@@ -13,14 +13,15 @@ if __name__ == "__main__":
     # Parse arguments
     # TODO: Set reasonable values for `alphabet_size` and `window`.
     parser = argparse.ArgumentParser()
-    parser.add_argument("--alphabet_size", default=None, type=int, help="If nonzero, limit alphabet to this many most frequent chars.")
+    parser.add_argument("--alphabet_size", default=100, type=int,
+                        help="If nonzero, limit alphabet to this many most frequent chars.")
     parser.add_argument("--batch_size", default=50, type=int, help="Batch size.")
     parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
     parser.add_argument("--hidden_layers", default="500", type=str, help="Hidden layer configuration.")
     parser.add_argument("--seed", default=42, type=int, help="Random seed.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--verbose", default=False, action="store_true", help="Verbose TF logging.")
-    parser.add_argument("--window", default=None, type=int, help="Window size to use.")
+    parser.add_argument("--window", default=5, type=int, help="Window size to use.")
     args = parser.parse_args([] if "__file__" not in globals() else None)
     args.hidden_layers = [int(hidden_layer) for hidden_layer in args.hidden_layers.split(",") if hidden_layer]
 
@@ -42,7 +43,7 @@ if __name__ == "__main__":
     ))
 
     # Load data
-    uppercase_data = UppercaseData(args.window, args.alphabet_size)
+    data = UppercaseData(args.window, args.alphabet_size)
 
     # TODO: Implement a suitable model, optionally including regularization, select
     # good hyperparameters and train the model.
@@ -64,6 +65,19 @@ if __name__ == "__main__":
     #   You can then flatten the one-hot encoded windows and follow with a dense layer.
     # - Alternatively, you can use `tf.keras.layers.Embedding` (which is an efficient
     #   implementation of one-hot encoding followed by a Dense layer) and flatten afterwards.
+
+    input = tf.keras.layers.Input(input_shape=[2 * args.window + 1], dtype=tf.int32)
+    one_hot = tf.keras.layers.Embeddign(len(uppercase_data.Dataset.alphabet),
+                                        len(uppercase_data.Dataset.alphabet))(input)
+    dense_layer = tf.keras.layers.Dense(10, activation='relu', regularization=tf.keras.regularizers.l1())(one_hot)
+    output = tf.keras.layers.Dense(2, activation='sigmoid')(dense_layer)
+
+    model = tf.keras.Model(input=input, output=output)
+    print(model.summary())
+    tf.keras.utils.plot_model(model, show_shapes=True)
+    model.compile(optimizer=tf.keras.optimizers.SGD(), loss=tf.keras.losses.BinaryCrossentropy()
+                  , metrics=[tf.keras.metrics.binary_accuracy])
+    model.fit(x=train_data, y=label, batch_size=args.batch_size, epochs=args.epoch)
 
     with open(os.path.join(args.logdir, "uppercase_test.txt"), "w", encoding="utf-8") as out_file:
         # TODO: Generate correctly capitalized test set.
