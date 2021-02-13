@@ -7,6 +7,7 @@ import re
 import numpy as np
 import tensorflow as tf
 
+
 # Dataset for generating sequences, with labels predicting whether the cumulative sum
 # is odd/even.
 class Dataset:
@@ -57,52 +58,109 @@ class Network:
         # `tf.keras.layers.RNN` wrapper with `tf.keras.layers.{LSTM,GRU,SimpleRNN}Cell`,
         # because the former can run transparently on a GPU and is also
         # considerably faster on a CPU).
+        if args.rnn_cell == "SimpleRNN":
+            layer1 = tf.keras.layers.SimpleRNN(args.rnn_cell_dim, return_sequences=True)(sequences)
+        elif args.rnn_cell == "LSTM":
+            layer1 = tf.keras.layers.LSTM(args.rnn_cell_dim, return_sequences=True)(sequences)
+        elif args.rnn_cell == "GRU":
+            layer1 = tf.keras.layers.GRU(args.rnn_cell_dim, return_sequences=True)(sequences)
+        else:
+            print("Invalid layer Parameter")
+            exit(1)
 
         # TODO: If `args.hidden_layer` is nonzero, process the result using
         # a ReLU-activated fully connected layer with `args.hidden_layer` units.
 
+        if args.hidden_layer:
+            layer1 = tf.keras.layers.Dense(args.hidden_layer, activation="relu")(layer1)
+
         # TODO: Generate predictions using a fully connected layer
         # with one output and `tf.nn.sigmoid` activation.
+        predictions = tf.keras.layers.Dense(1, activation=tf.nn.sigmoid)(layer1)
 
         self.model = tf.keras.Model(inputs=sequences, outputs=predictions)
 
         # TODO: Create an Adam optimizer in self._optimizer
+        self._optimizer = tf.keras.optimizers.Adam()
+
         # TODO: Create a suitable loss in self._loss
+        def loss_func(y_true, y_pred):
+            y_true = tf.cast(y_true, tf.float32)
+            return tf.losses.MeanSquaredError(y_true, y_pred)
+
+        self._loss = loss_func
+
         # TODO: Create two metrics in self._metrics dictionary:
         #  - "loss", which is tf.metrics.Mean()
         #  - "accuracy", which is suitable accuracy
+        self._metrics = {"loss": tf.metrics.Mean(), "accuracy": tf.metrics.CosineSimilarity()}
+
         # TODO: Create a summary file writer using `tf.summary.create_file_writer`.
         # I usually add `flush_millis=10 * 1000` arguments to get the results reasonably quickly.
+        logdir = os.path.join("tflogs", "{}-{}-{}".format(
+            os.path.basename(globals().get("__file__", "notebook")),
+            datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S"),
+            ",".join(
+                ("{}={}".format(re.sub("(.)[^_]*_?", r"\1", key), value) for key, value in sorted(vars(args).items())))
+        ))
+        self._writer = tf.summary.create_file_writer(logdir, flush_millis=10 * 1000)
 
     @tf.function
     def train_batch(self, batch, clip_gradient):
         # TODO: Using a gradient tape, compute
         # - probabilities from self.model, passing `training=True` to the model
         # - loss, using `self._loss`
+        with tf.GradientTape() as tape:
+            logits = self.model(batch["sequences"], training=True)
+            loss_value = self._loss(y_true=batch["labels"], y_pred=logits)
 
         # TODO: Then, compute `gradients` using `tape.gradients` with the loss and model variables.
+        grads = tape.gradient(loss_value, self.model.trainable_weights)
 
         # TODO: If `args.clip_gradient` is nonzero, clip the gradient
         # and compute `gradient_norm` using `tf.clip_by_global_norm`.
         # Otherwise, only compute the `gradient_norm` using
         # `tf.linalg.global_norm`.
+        if args.clip_gradient:
+            gradient_norm = tf.clip_by_global_norm(grads, clip_gradient)
+        else:
+            gradient_norm = tf.linalg.global_norm(grads)
 
         # TODO: Apply the gradients using the `self._optimizer`
+        self._optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
 
         # TODO: Generate the summaries. Start by setting the current summary step using
         # `tf.summary.experimental.set_step(self._optimizer.iterations)`.
+        tf.summary.experimental.set_step(self._optimizer.iterations)
 
         # Then, in the following with block, which records summaries
         # each 100 steps, perform the following:
         with self._writer.as_default(), tf.summary.record_if(self._optimizer.iterations % 100 == 0):
             # - iterate through the self._metrics
-            #   - reset each metric
+            for key in self._metrics.keys():
+                #   - reset each metric
+                self._metrics[key].reset_states()
+
             #   - for "loss" metric, apply currently computed `loss`
+            self._metrics["loss"].update_state(batch["labels"], logits)
+
             #   - for other metrics, compute their value using the gold labels and predictions
+            self._metrics["accuracy"].update_state(batch["labels"], logits)
+
             #   - then, emit the summary to TensorBoard using
             #     `tf.summary.scalar("train/" + name, metric.result())`
+            tf.summary.scalar("train/" + "accuracy", self._metrics["accuracy"].result())
+            tf.summary.scalar("train/" + "loss", self._metrics["loss"].result())
+
             # - finally, also emit the gradient_norm using
             #   `tf.summary.scalar("train/gradient_norm", gradient_norm)`
+            tf.summary.scalar("train/gradient_norm", gradient_norm)
+
+            """if self._optimizer.iterations % 100 == 0:
+                print(
+                    "Training loss (for one batch) at step %d: %.4f"
+                    % (self._optimizer.iterations, float(loss_value))
+                )"""
 
     def train_epoch(self, dataset, args):
         for batch in dataset.batches(args.batch_size):
@@ -117,20 +175,31 @@ class Network:
         # averaged over all `dataset`.
         #
         # Start by resetting all metrics in `self._metrics`.
+        for key in self._metrics.keys():
+            self._metrics[key].reset_states()
 
         # TODO: Then iterate over all batches in `dataset.batches(args.batch_size)`.
-        # - For each, predict probabilities using `self.predict_batch`.
-        # - Compute loss of the batch
-        # - Update the metrics (the "loss" metric uses current loss, others are computed
-        #   using the gold labels and the predictions)
+        for batch in dataset.batches(args.batch_size):
+            # - For each, predict probabilities using `self.predict_batch`.
+            predicted = self.predict_batch(batch)
+
+            # - Compute loss of the batch
+            self._loss(predicted, batch["labels"])
+
+            # - Update the metrics (the "loss" metric uses current loss, others are computed
+            #   using the gold labels and the predictions)
+            self._metrics["loss"].update_state(batch["labels"], predicted)
+            self._metrics["accuracy"].update_state(batch["labels"], predicted)
         #
         # Finally, create a dictionary `metrics` with results, using names and values in `self._metrics`.
+        metrics = {"loss": self._metrics["loss"].result(), "accuracy": self._metrics["accuracy"].result()}
 
         with self._writer.as_default():
             for name, metric in metrics.items():
                 tf.summary.scalar("test/" + name, metric)
 
         return metrics
+
 
 if __name__ == "__main__":
     # Parse arguments
@@ -163,7 +232,7 @@ if __name__ == "__main__":
 
     # Report only errors by default
     if not args.verbose:
-        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
     # Create logdir name
     args.logdir = os.path.join("logs", "{}-{}-{}".format(
