@@ -10,6 +10,7 @@ import tensorflow_addons as tfa
 
 from morpho_dataset import MorphoDataset
 
+
 class Network:
     class Lemmatizer(tf.keras.Model):
         def __init__(self, args, num_source_chars, num_target_chars):
@@ -17,12 +18,21 @@ class Network:
 
             # TODO: Define
             # - `source_embedding` as a masked embedding layer of source chars into args.cle_dim dimensions
+            self.source_embedding = tf.keras.layers.Embedding(num_source_chars, args.cle_dim, mask_zero=True)
+
             # - `source_rnn` as a bidirectional GRU with args.rnn_dim units, returning only the last output
             #   (i.e., return_sequences=False), summing opposite directions
+            gru_layer = tf.keras.layers.GRU(args.rnn_dim, return_sequences=False)
+            self.source_rnn = tf.keras.layers.Bidirectional(gru_layer, merge_mode='sum')
 
             # - `target_embedding` as an unmasked embedding layer of target chars into args.cle_dim dimensions
+            self.target_embedding = tf.keras.layers.Embedding(num_target_chars, args.cle_dim, mask_zero=False)
+
             # - `target_rnn_cell` as a GRUCell with args.rnn_dim units
+            self.target_rnn_cell = tf.keras.layers.GRUCell(args.rnn_dim)
+
             # - `target_output_layer` as a Dense layer into `num_target_chars`
+            self.target_output_layer = tf.keras.layers.Dense(num_target_chars)
 
         class DecoderTraining(tfa.seq2seq.BaseDecoder):
             def __init__(self, lemmatizer, *args, **kwargs):
@@ -31,44 +41,57 @@ class Network:
 
             @property
             def batch_size(self):
-                 # TODO: Return the batch size of self.source_states, using tf.shape
-                raise NotImplementedError()
+                # TODO: Return the batch size of self.source_states, using tf.shape
+                return tf.shape(self.source_states)[0]
+
             @property
             def output_size(self):
-                 # TODO: Return `tf.TensorShape(number of logits per each output element)`
-                 # By output element we mean characters.
-                raise NotImplementedError()
+                # TODO: Return `tf.TensorShape(number of logits per each output element)`
+                # By output element we mean characters.
+                return tf.TensorShape(10)
+
             @property
             def output_dtype(self):
-                 # TODO: Return the type of the logits
+                # TODO: Return the type of the logits
                 raise NotImplementedError()
 
             def initialize(self, layer_inputs, initial_state=None):
                 self.source_states, self.targets = layer_inputs
 
                 # TODO: Define `finished` as a vector of self.batch_size of `False` [see tf.fill].
+                finished = tf.fill(self.batch_size, value=False)
+
                 # TODO: Define `inputs` as a vector of self.batch_size of MorphoDataset.Factor.BOW,
                 #   embedded using self.lemmatizer.target_embedding
+                inputs = self.lemmatizer.target_embedding(MorphoDataset.Factor.BOW)
+
                 # TODO: Define `states` as self.source_states
+                states = self.source_states
                 return finished, inputs, states
 
             def step(self, time, inputs, states, training):
                 # TODO: Pass `inputs` and `[states]` through self.lemmatizer.target_rnn_cell,
                 #   which returns `(outputs, [states])`.
+                outputs, states = self.lemmatizer.target_rnn_cell([inputs, states])
+
                 # TODO: Overwrite `outputs` by passing them through self.lemmatizer.target_output_layer,
+                outputs = self.lemmatizer.target_output_layer(outputs)
+
                 # TODO: Define `next_inputs` by embedding `time`-th chars from `self.targets`.
+
                 # TODO: Define `finished` as True if `time`-th char from `self.targets` is EOW, False otherwise.
                 return outputs, states, next_inputs, finished
 
         class DecoderPrediction(DecoderTraining):
             @property
             def output_size(self):
-                 # TODO: Return `tf.TensorShape()` describing a scalar element,
-                 # because we are generating scalar predictions now.
+                # TODO: Return `tf.TensorShape()` describing a scalar element,
+                # because we are generating scalar predictions now.
                 raise NotImplementedError()
+
             @property
             def output_dtype(self):
-                 # TODO: Return the type of the generated predictions
+                # TODO: Return the type of the generated predictions
                 raise NotImplementedError()
 
             def initialize(self, layer_inputs, initial_state=None):
@@ -125,8 +148,10 @@ class Network:
 
             # Reshape the output to the original matrix of lemmas
             # and explicitly set mask for loss and metric computation.
-            output_layer = tf.scatter_nd(valid_words, output_layer, tf.concat([source_charseqs_shape[:2], tf.shape(output_layer)[1:]], axis=0))
-            output_layer._keras_mask = tf.sequence_mask(tf.scatter_nd(valid_words, output_lens, source_charseqs_shape[:2]))
+            output_layer = tf.scatter_nd(valid_words, output_layer,
+                                         tf.concat([source_charseqs_shape[:2], tf.shape(output_layer)[1:]], axis=0))
+            output_layer._keras_mask = tf.sequence_mask(
+                tf.scatter_nd(valid_words, output_lens, source_charseqs_shape[:2]))
             return output_layer
 
     def __init__(self, args, num_source_chars, num_target_chars):
@@ -142,7 +167,8 @@ class Network:
     def append_eow(self, sequences):
         """Append EOW character after end of every given sequence."""
         padded_sequences = np.pad(sequences, [[0, 0], [0, 0], [0, 1]])
-        ends = np.logical_xor(padded_sequences != 0, np.pad(sequences, [[0, 0], [0, 0], [1, 0]], constant_values=1) != 0)
+        ends = np.logical_xor(padded_sequences != 0,
+                              np.pad(sequences, [[0, 0], [0, 0], [1, 0]], constant_values=1) != 0)
         padded_sequences[ends] = MorphoDataset.Factor.EOW
         return padded_sequences
 
@@ -161,9 +187,11 @@ class Network:
                 metrics = dict(zip(self.lemmatizer.metrics_names, metrics))
 
                 predictions = self.predict_batch(batch[dataset.FORMS].charseqs[:1]).numpy()
-                form = "".join(dataset.data[dataset.FORMS].alphabet[i] for i in batch[dataset.FORMS].charseqs[0, 0] if i)
+                form = "".join(
+                    dataset.data[dataset.FORMS].alphabet[i] for i in batch[dataset.FORMS].charseqs[0, 0] if i)
                 gold_lemma = "".join(dataset.data[dataset.LEMMAS].alphabet[i] for i in targets[0, 0] if i)
-                system_lemma = "".join(dataset.data[dataset.LEMMAS].alphabet[i] for i in predictions[0, 0] if i != MorphoDataset.Factor.EOW)
+                system_lemma = "".join(dataset.data[dataset.LEMMAS].alphabet[i] for i in predictions[0, 0] if
+                                       i != MorphoDataset.Factor.EOW)
                 status = ", ".join([*["{}={:.4f}".format(name, value) for name, value in metrics.items()],
                                     "{} {} {}".format(form, gold_lemma, system_lemma)])
                 print("Step {}:".format(iteration), status)
